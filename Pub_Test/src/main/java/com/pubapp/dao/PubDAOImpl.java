@@ -8,11 +8,14 @@ import java.util.Map;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
-import com.google.gson.Gson;
+import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBQueryExpression;
+import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.pubapp.model.ApplicationTab;
 import com.pubapp.model.KeyValuePair;
 import com.pubapp.model.NewUser;
 import com.pubapp.util.MapToKeyValueConverter;
+import com.pubapp.util.PubException;
+import com.pubapp.util.PubExceptionConstants;
 
 public class PubDAOImpl implements PubDAO {
 	private  DynamoDBMapper mapper;
@@ -22,33 +25,59 @@ public class PubDAOImpl implements PubDAO {
 		this.mapper = new DynamoDBMapper(client);
 	}
 
-	public ApplicationTab getApplicationByAppid(String userId, int appId) {
+	public ApplicationTab getApplicationByAppid(String userId, int appId,String token) throws PubException {
 		System.out.println(mapper);
 		NewUser user=mapper.load(NewUser.class, userId);
+		if(token==null)
+		{
+			throw new PubException(PubExceptionConstants.TOKEN_NOT_FOUND);
+		}
+		if(user == null)
+		{
+			throw new PubException(PubExceptionConstants.USERID_NOT_FOUND);
+		}
 		List<ApplicationTab> list=user.getApplicationtab();
 		ApplicationTab app=getApplicationById(list, appId);
+		
 		if(app!=null){
 			return app;
+			
 		}
-		return null;
+		else
+			throw new PubException(PubExceptionConstants.APPID_NOT_FOUND);
+		
+		
 	}
 	
-	
-	public List<KeyValuePair> getkeyvaluepair(String userId,int appId )
+
+	public List<KeyValuePair> getkeyvaluepair(String userId,int appId ,String token ) throws PubException
 	{
 		NewUser user=mapper.load(NewUser.class,userId);
-		ApplicationTab tab=getApplicationByAppid(userId, appId);
+		if(token==null)
+		{
+			throw new PubException(PubExceptionConstants.TOKEN_NOT_FOUND);
+		}
+		ApplicationTab tab=getApplicationByAppid(userId, appId,token);
 		List<KeyValuePair>list=tab.getKeyvaluepairs();
 					
+	
+		/*if(tab==null)
+		{
+			throw new PubException(PubExceptionConstants.USERID_NOT_FOUND);
+		}*/
 		return list ;
 		
 	}
-	public Object getvalue(String userId,int appId,String key)
+	public Object getvalue(String userId,int appId,String key,String token) throws PubException
 	{
 		Object object=null;
 		//List<KeyValuePair> exitkeyvalue=new ArrayList<KeyValuePair>();
-		List<KeyValuePair> pair= getkeyvaluepair(userId, appId);
-		 
+		if(token==null)
+		{
+			throw new PubException(PubExceptionConstants.TOKEN_NOT_FOUND);
+		}
+		List<KeyValuePair> pair= getkeyvaluepair(userId, appId,token);
+		 pair=MapToKeyValueConverter.convert(pair);
 		 for(KeyValuePair keyvalue:pair)
 		 {
 			 if(keyvalue.getKey().equals(key))
@@ -66,12 +95,21 @@ public class PubDAOImpl implements PubDAO {
 	public ApplicationTab getApplicationById(List<ApplicationTab> list, int appId) {
 		for(ApplicationTab app:list){
 			if(app.getAppid()==appId){
+				
 				return app;
 			}
 		}
+	
 		return null;
 	}
-	
+	public NewUser getuserbyemail(String Uemail )
+	{
+		 NewUser newUser=mapper.load(NewUser.class, Uemail);
+		 if(newUser!=null)
+			 return newUser;
+		 else
+			 return null;
+	}
 	public int getApplicationIndex(List<ApplicationTab> list, int appId){
 		
 		for(int i=0;i<list.size();i++){
@@ -83,7 +121,7 @@ public class PubDAOImpl implements PubDAO {
 		return -1;
 	}
 
-	public void persistData(NewUser user) {
+	public Object persistData(NewUser user) throws PubException {
 		List<ApplicationTab>list=user.getApplicationtab();
 		int  applicationtabsize =user.getLastapplicationid();   
 		for(ApplicationTab app:list){
@@ -92,17 +130,46 @@ public class PubDAOImpl implements PubDAO {
 				app.setAppid(applicationtabsize);
 				user.setLastapplicationid(applicationtabsize);
 			}
+			
 		}
 		
 		//applicationtabsize=applicationtabsize+1;
 		
+		
+		validateDuplicateUser(user.getUemail());
 		mapper.save(user);
+		NewUser userSaved=mapper.load(NewUser.class, user.getUemail());
+		throw new PubException(PubExceptionConstants.SUCCESSFULLY_SAVE_USER,userSaved.getUid());
 
 	}
 	
-	public void updateKeyValue(String userId, int appId, List<KeyValuePair> kvpairs) {
+	
+	public void UpdateUser(NewUser user) throws PubException {
+		List<ApplicationTab>list=user.getApplicationtab();
+		int  applicationtabsize =user.getLastapplicationid();   
+		for(ApplicationTab app:list){
+			if(app.getAppid()==0){
+				applicationtabsize=applicationtabsize+1;
+				app.setAppid(applicationtabsize);
+				user.setLastapplicationid(applicationtabsize);
+			}
+			
+		}
 		
-		ApplicationTab applicationTab=getApplicationByAppid(userId, appId);
+		//applicationtabsize=applicationtabsize+1;
+		
+		
+		
+		mapper.save(user);
+		throw new PubException(PubExceptionConstants.SUCCESSFULLY_SAVE_USER);
+
+	}
+	public void updateKeyValue(String userId, int appId, List<KeyValuePair> kvpairs,String token) throws PubException {
+		if(token==null)
+		{
+			throw new PubException(PubExceptionConstants.TOKEN_NOT_FOUND);
+		}
+		ApplicationTab applicationTab=getApplicationByAppid(userId, appId,token);
 		if(applicationTab!=null){
 		List<KeyValuePair> existingKVPs=applicationTab.getKeyvaluepairs();
 		List<KeyValuePair> updatedPairs=new ArrayList<KeyValuePair>();
@@ -143,15 +210,26 @@ public class PubDAOImpl implements PubDAO {
 	NewUser user=mapper.load(NewUser.class, userId);
 	user.getApplicationtab().remove(getApplicationIndex(user.getApplicationtab(), appId));
 	user.getApplicationtab().add(applicationTab);
-	persistData(user);
+	UpdateUser(user);
+	
+	throw new PubException(PubExceptionConstants.SUCCESSFULLY_UPDATED_KEY_VALUE);
+	
 	
 		}
 	}
 	
-	public void updateapplication( String userId,  List<ApplicationTab>applicationlist)
+	public void updateapplication( String userId,  List<ApplicationTab>applicationlist,String token)throws PubException
 	{
 		
 		NewUser user=mapper.load(NewUser.class, userId);
+		if(token==null)
+		{
+			throw new PubException(PubExceptionConstants.TOKEN_NOT_FOUND);
+		}
+		if(user == null)
+		{
+			throw new PubException(PubExceptionConstants.USERID_NOT_FOUND);
+		}
 		List<ApplicationTab> exitapplication=user.getApplicationtab();
 		
 	//	ApplicationTab app=getApplicationById(list, appId);
@@ -186,9 +264,23 @@ public class PubDAOImpl implements PubDAO {
 		System.out.println(updateapptab);
 		NewUser user1=mapper.load(NewUser.class, userId);
 		user1.setApplicationtab(updateapptab);
-		persistData(user1);
+		UpdateUser(user1);
+		throw new PubException(PubExceptionConstants.SUCCESSFULLY_UPDATED_APPLICATION);
 	
 	}
+
+	
+	public void validateDuplicateUser(String Uemail) throws PubException {
+	
+		NewUser user=getuserbyemail(Uemail);
+		if(user!=null)
+			throw new PubException(PubExceptionConstants.USER_ALREADY_EXIST);
+	}
+
+	
+
+	
+	
 	
 	
 
